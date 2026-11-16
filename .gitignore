@@ -1,1 +1,37 @@
-node_modules
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Production build
+/build
+
+# Test coverage output
+/coverage
+
+# Local environment overrides (never commit real secrets)
+.env.local
+.env.*.local
+
+# Firebase service account keys (Admin SDK / seeding scripts)
+service-account*.json
+*-service-account*.json
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.poku/
+
+# Firebase Emulator Suite debug logs
+*-debug.log
+firebase-debug.log
+ui-debug.log
+firestore-debug.log
+pubsub-debug.log
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp

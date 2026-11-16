@@ -1,7 +1,9 @@
 import * as actionTypes from './actionTypes';
-import axios from '../../axios-orders';
+import { ref, get, push, query, orderByChild, equalTo } from 'firebase/database';
 
-export const purchaseBurgerSuccess = ( id, orderData ) => {
+import { database, isFirebaseConfigured } from '../../services/firebase';
+
+export const purchaseBurgerSuccess = (id, orderData) => {
     return {
         type: actionTypes.PURCHASE_BURGER_SUCCESS,
         orderId: id,
@@ -9,29 +11,16 @@ export const purchaseBurgerSuccess = ( id, orderData ) => {
     };
 };
 
-export const purchaseBurgerFail = ( error ) => {
+export const purchaseBurgerFail = (error) => {
     return {
         type: actionTypes.PURCHASE_BURGER_FAIL,
         error: error
     };
-}
+};
 
 export const purchaseBurgerStart = () => {
     return {
         type: actionTypes.PURCHASE_BURGER_START
-    };
-};
-
-export const purchaseBurger = ( orderData, token ) => {
-    return dispatch => {
-        dispatch( purchaseBurgerStart() );
-        axios.post( '/orders.json?auth=' + token, orderData )
-            .then( response => {
-                dispatch( purchaseBurgerSuccess( response.data.name, orderData ) );
-            } )
-            .catch( error => {
-                dispatch( purchaseBurgerFail( error ) );
-            } );
     };
 };
 
@@ -41,14 +30,14 @@ export const purchaseInit = () => {
     };
 };
 
-export const fetchOrdersSuccess = ( orders ) => {
+export const fetchOrdersSuccess = (orders) => {
     return {
         type: actionTypes.FETCH_ORDERS_SUCCESS,
         orders: orders
     };
 };
 
-export const fetchOrdersFail = ( error ) => {
+export const fetchOrdersFail = (error) => {
     return {
         type: actionTypes.FETCH_ORDERS_FAIL,
         error: error
@@ -61,23 +50,56 @@ export const fetchOrdersStart = () => {
     };
 };
 
+// Writes the order to the Realtime Database. The SDK signs the request with the
+// signed-in user's credentials, so no token is ever placed in the URL.
+export const purchaseBurger = (orderData, token) => {
+    return dispatch => {
+        dispatch(purchaseBurgerStart());
+
+        if (!isFirebaseConfigured || !database) {
+            dispatch(purchaseBurgerFail({ message: 'Ordering is not configured for this deployment.' }));
+            return Promise.resolve();
+        }
+
+        return push(ref(database, 'orders'), orderData)
+            .then(orderRef => {
+                dispatch(purchaseBurgerSuccess(orderRef.key, orderData));
+            })
+            .catch(error => {
+                dispatch(purchaseBurgerFail({ message: 'The order could not be saved.' }));
+            });
+    };
+};
+
+// Reads back only the orders belonging to the signed-in user. The database
+// rules enforce the same restriction server-side.
 export const fetchOrders = (token, userId) => {
     return dispatch => {
         dispatch(fetchOrdersStart());
-        const queryParams = '?auth=' + token + '&orderBy="userId"&equalTo="' + userId + '"';
-        axios.get( '/orders.json' + queryParams)
-            .then( res => {
+
+        if (!isFirebaseConfigured || !database) {
+            dispatch(fetchOrdersSuccess([]));
+            return Promise.resolve();
+        }
+
+        const ordersQuery = query(ref(database, 'orders'), orderByChild('userId'), equalTo(userId));
+
+        return get(ordersQuery)
+            .then(snapshot => {
                 const fetchedOrders = [];
-                for ( let key in res.data ) {
-                    fetchedOrders.push( {
-                        ...res.data[key],
-                        id: key
-                    } );
+                const value = snapshot && snapshot.val ? snapshot.val() : null;
+                if (value) {
+                    for (let key in value) {
+                        fetchedOrders.push({
+                            ...value[key],
+                            id: key
+                        });
+                    }
                 }
                 dispatch(fetchOrdersSuccess(fetchedOrders));
-            } )
-            .catch( err => {
-                dispatch(fetchOrdersFail(err));
-            } );
+            })
+            .catch(error => {
+                dispatch(fetchOrdersFail({ message: 'Your orders could not be loaded.' }));
+            });
     };
 };

@@ -1,0 +1,27 @@
+title = "Secret scanning for the Burger Builder repository"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Public, non-secret values that are intentionally committed.
+
+A Firebase Web configuration is public by design: it is inlined into the
+browser bundle at build time and cannot be kept secret. Access is constrained
+by the Realtime Database rules in firebase.database.rules.json and by API-key
+restrictions in the Google Cloud console (HTTP referrers + required APIs).
+
+The second entry is an old, revoked API key quoted verbatim in
+docs/security-report.md as the "before" baseline of the audit finding that
+moved the key out of source. It is inert but still matches the pattern.
+
+The allowlist is scoped to these exact values only. It deliberately does NOT
+exclude the files that contain them by path: a path-based exclusion would
+suppress every other secret in that file, which is exactly what this gate
+exists to catch.
+"""
+regexes = [
+  '''AIzaSyCi8kZHcinIYYLGTFKeFl_7skwAx4TiZDE''',
+  '''AIzaSyB5cHT6x62tTe-g27vBDIqWcwQWBSj3uiY''',
+]

@@ -1,32 +1,25 @@
 import React from 'react';
+import { screen } from '@testing-library/react';
 
-import { configure, shallow } from 'enzyme';
-import Adapter from 'enzyme-adapter-react-16';
-
+import { renderWithProviders } from '../../../test-utils';
 import NavigationItems from './NavigationItems';
-import NavigationItem from './NavigationItem/NavigationItem';
-
-configure({adapter: new Adapter()});
 
 describe('<NavigationItems />', () => {
-    let wrapper;
+    it('should render two navigation items if not authenticated', () => {
+        renderWithProviders(<NavigationItems isAuthenticated={false} />);
 
-    beforeEach(() => {
-        wrapper = shallow(<NavigationItems />);
+        expect(screen.getByRole('link', { name: 'Burger Builder' })).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Authenticate' })).toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Orders' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Logout' })).not.toBeInTheDocument();
     });
 
-    it('should render two <NavigationItem /> elements if not authenticated', () => {
-        expect(wrapper.find(NavigationItem)).toHaveLength(2);
-    });
+    it('should render three navigation items if authenticated', () => {
+        renderWithProviders(<NavigationItems isAuthenticated={true} />);
 
-    it('should render three <NavigationItem /> elements if authenticated', () => {
-        // wrapper = shallow(<NavigationItems isAuthenticated />);
-        wrapper.setProps({isAuthenticated: true});
-        expect(wrapper.find(NavigationItem)).toHaveLength(3);
-    });
-
-    it('should an exact logout button', () => {
-        wrapper.setProps({isAuthenticated: true});
-        expect(wrapper.contains(<NavigationItem link="/logout">Logout</NavigationItem>)).toEqual(true);
+        expect(screen.getByRole('link', { name: 'Burger Builder' })).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Orders' })).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Logout' })).toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Authenticate' })).not.toBeInTheDocument();
     });
 });
