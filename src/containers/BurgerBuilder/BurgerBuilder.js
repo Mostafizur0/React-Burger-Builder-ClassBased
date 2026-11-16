@@ -1,5 +1,6 @@
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
+import { withRouter } from 'react-router-dom';
 
 import Aux from '../../hoc/Aux/Aux';
 import Burger from '../../components/Burger/Burger';
@@ -7,15 +8,10 @@ import BuildControls from '../../components/Burger/BuildControls/BuildControls';
 import Modal from '../../components/UI/Modal/Modal';
 import OrderSummary from '../../components/Burger/OrderSummary/OrderSummary';
 import Spinner from '../../components/UI/Spinner/Spinner';
-import withErrorHandler from '../../hoc/withErrorHandler/withErrorHandler';
+import ErrorModal from '../../components/UI/ErrorModal/ErrorModal';
 import * as actions from '../../store/actions/index';
-import axios from '../../axios-orders';
 
 export class BurgerBuilder extends Component {
-    // constructor(props) {
-    //     super(props);
-    //     this.state = {...}
-    // }
     state = {
         purchasing: false
     }
@@ -61,7 +57,7 @@ export class BurgerBuilder extends Component {
             disabledInfo[key] = disabledInfo[key] <= 0
         }
         let orderSummary = null;
-        let burger = this.props.error ? <p>Ingredients can't be loaded!</p> : <Spinner />;
+        let burger = <Spinner />;
 
         if ( this.props.ings ) {
             burger = (
@@ -86,9 +82,13 @@ export class BurgerBuilder extends Component {
         // {salad: true, meat: false, ...}
         return (
             <Aux>
-                <Modal show={this.state.purchasing} modalClosed={this.purchaseCancelHandler}>
+                <Modal
+                    show={this.state.purchasing}
+                    testId="order-summary-modal"
+                    modalClosed={this.purchaseCancelHandler}>
                     {orderSummary}
                 </Modal>
+                <ErrorModal />
                 {burger}
             </Aux>
         );
@@ -114,4 +114,4 @@ const mapDispatchToProps = dispatch => {
     }
 }
 
-export default connect(mapStateToProps, mapDispatchToProps)(withErrorHandler( BurgerBuilder, axios ));
+export default withRouter( connect(mapStateToProps, mapDispatchToProps)(BurgerBuilder) );

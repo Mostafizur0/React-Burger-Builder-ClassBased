@@ -1,0 +1,267 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Weekly security refresh: re-runs the audit and the image scan.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  lint-test-build:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test with coverage
+        # The 100% coverage threshold in package.json fails the job on a regression.
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage
+          retention-days: 7
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: build
+          retention-days: 7
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit dependencies
+        # Fails on any high or critical advisory.
+        run: npm audit --audit-level=high
+
+  rules:
+    name: Verify database security rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Start the Firebase emulators
+        # The project id must match .firebaserc: the Realtime Database derives
+        # its namespace from it, and the security rules only bind to the
+        # namespace the emulator was started for.
+        run: |
+          npx --yes firebase-tools@latest emulators:start \
+            --project burger-builder-951c6 \
+            --only auth,database \
+            --config firebase.json &
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:9000/.json?ns=burger-builder-951c6-default-rtdb"; then
+              echo "Database emulator is ready."
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Assert the rules are enforced
+        run: |
+          NS=burger-builder-951c6-default-rtdb
+          BASE=http://127.0.0.1:9000
+          fail=0
+
+          check_denied () {
+            local label="$1"; shift
+            local code
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$@")
+            if [ "$code" = "401" ]; then
+              echo "PASS: $label is denied (HTTP $code)"
+            else
+              echo "FAIL: $label returned HTTP $code, expected 401"
+              fail=1
+            fi
+          }
+
+          check_allowed () {
+            local label="$1"; shift
+            local code
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$@")
+            if [ "$code" = "200" ]; then
+              echo "PASS: $label is allowed (HTTP $code)"
+            else
+              echo "FAIL: $label returned HTTP $code, expected 200"
+              fail=1
+            fi
+          }
+
+          # The root and the orders collection must not be readable or
+          # writable without a signed-in user.
+          check_denied "unauthenticated root read" "$BASE/.json?ns=$NS"
+          check_denied "unauthenticated orders read" "$BASE/orders.json?ns=$NS"
+          check_denied "unauthenticated orders write" \
+            -X PUT -H 'Content-Type: application/json' \
+            -d '{"userId":"x","price":1,"ingredients":{}}' "$BASE/orders/probe.json?ns=$NS"
+
+          # The ingredients node is world-readable by design.
+          check_allowed "public ingredients read" "$BASE/ingredients.json?ns=$NS"
+
+          exit $fail
+
+      - name: Emulator logs
+        if: failure()
+        run: cat database-debug.log || true
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The scan covers the current tree, so the shallow clone is enough.
+          fetch-depth: 1
+
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # The SARIF upload needs `security-events: write`; the workflow only
+          # grants `contents: read`, and the upload would prompt on fork PRs.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+          # Do not post the findings back into the pull request.
+          GITLEAKS_NOTIFY_USER_LIST: ''
+        with:
+          # Fails the build on any finding.
+          # --no-git scans the working tree instead of the commit history, which
+          # is the scope this gate covers.
+          args: detect --no-banner --redact --verbose --no-git --source . --config .gitleaks.toml
+
+  docker:
+    name: Build and verify the image
+    runs-on: ubuntu-latest
+    needs: [lint-test-build]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run the image
+        run: |
+          docker run -d --name burger-test -p 8090:8080 ghcr.io/${{ github.repository }}:latest
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8090/healthz > /dev/null; then
+              echo "Container is healthy."
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null -w "GET / -> HTTP %{http_code}\n" http://localhost:8090/
+          curl -fsS -o /dev/null -w "GET /orders -> HTTP %{http_code}\n" http://localhost:8090/orders
+          curl -sSI http://localhost:8090/ | grep -i content-security-policy
+
+      - name: Container logs
+        if: failure()
+        run: docker logs burger-test
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f burger-test || true
+
+  security:
+    name: Image and dependency scan
+    runs-on: ubuntu-latest
+    needs: [docker]
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy image scan
+        # Non-blocking: a scanner outage should not stop a merge.
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:latest
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Dependency review
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

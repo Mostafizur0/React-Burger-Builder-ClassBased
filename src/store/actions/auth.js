@@ -1,6 +1,12 @@
-import axios from 'axios';
+import {
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
+} from 'firebase/auth';
 
 import * as actionTypes from './actionTypes';
+import { auth as firebaseAuth, isFirebaseConfigured } from '../../services/firebase';
 
 export const authStart = () => {
     return {
@@ -24,45 +30,39 @@ export const authFail = (error) => {
 };
 
 export const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('expirationDate');
-    localStorage.removeItem('userId');
     return {
         type: actionTypes.AUTH_LOGOUT
     };
 };
 
-export const checkAuthTimeout = (expirationTime) => {
-    return dispatch => {
-        setTimeout(() => {
-            dispatch(logout());
-        }, expirationTime * 1000);
-    };
-};
+// Normalises Firebase auth errors into a plain message object.
+const toAuthError = (error) => ({
+    message: (error && error.message) || 'Authentication failed. Please try again.'
+});
 
 export const auth = (email, password, isSignup) => {
     return dispatch => {
-        dispatch(authStart());
-        const authData = {
-            email: email,
-            password: password,
-            returnSecureToken: true
-        };
-        let url = 'https://www.googleapis.com/identitytoolkit/v3/relyingparty/signupNewUser?key=AIzaSyB5cHT6x62tTe-g27vBDIqWcwQWBSj3uiY';
-        if (!isSignup) {
-            url = 'https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key=AIzaSyB5cHT6x62tTe-g27vBDIqWcwQWBSj3uiY';
+        if (!isFirebaseConfigured || !firebaseAuth) {
+            dispatch(authFail({ message: 'Authentication is not configured for this deployment.' }));
+            return;
         }
-        axios.post(url, authData)
-            .then(response => {
-                const expirationDate = new Date(new Date().getTime() + response.data.expiresIn * 1000);
-                localStorage.setItem('token', response.data.idToken);
-                localStorage.setItem('expirationDate', expirationDate);
-                localStorage.setItem('userId', response.data.localId);
-                dispatch(authSuccess(response.data.idToken, response.data.localId));
-                dispatch(checkAuthTimeout(response.data.expiresIn));
+
+        dispatch(authStart());
+
+        const request = isSignup
+            ? createUserWithEmailAndPassword(firebaseAuth, email, password)
+            : signInWithEmailAndPassword(firebaseAuth, email, password);
+
+        // The SDK resolves with a UserCredential; the User itself - the object
+        // that owns getIdToken() - lives on its `user` property.
+        return request
+            .then(credential => credential.user)
+            .then(user => user.getIdToken().then(idToken => ({ idToken, uid: user.uid })))
+            .then(({ idToken, uid }) => {
+                dispatch(authSuccess(idToken, uid));
             })
-            .catch(err => {
-                dispatch(authFail(err.response.data.error));
+            .catch(error => {
+                dispatch(authFail(toAuthError(error)));
             });
     };
 };
@@ -74,20 +74,40 @@ export const setAuthRedirectPath = (path) => {
     };
 };
 
+// Subscribes to Firebase auth state. Returns the unsubscribe function so the
+// caller can detach the listener on unmount.
 export const authCheckState = () => {
     return dispatch => {
-        const token = localStorage.getItem('token');
-        if (!token) {
+        if (!isFirebaseConfigured || !firebaseAuth) {
             dispatch(logout());
-        } else {
-            const expirationDate = new Date(localStorage.getItem('expirationDate'));
-            if (expirationDate <= new Date()) {
-                dispatch(logout());
-            } else {
-                const userId = localStorage.getItem('userId');
-                dispatch(authSuccess(token, userId));
-                dispatch(checkAuthTimeout((expirationDate.getTime() - new Date().getTime()) / 1000 ));
-            }   
+            return () => {};
         }
+
+        return onAuthStateChanged(firebaseAuth, user => {
+            if (user) {
+                user.getIdToken()
+                    .then(idToken => {
+                        dispatch(authSuccess(idToken, user.uid));
+                    })
+                    .catch(error => {
+                        dispatch(authFail(toAuthError(error)));
+                    });
+            } else {
+                dispatch(logout());
+            }
+        });    };
+};
+
+// Signs the user out of Firebase, then clears local session state.
+export const signOutUser = () => {
+    return dispatch => {
+        const clearSession = () => dispatch(logout());
+
+        if (!isFirebaseConfigured || !firebaseAuth) {
+            clearSession();
+            return Promise.resolve();
+        }
+
+        return signOut(firebaseAuth).then(clearSession).catch(clearSession);
     };
 };
