@@ -50,5 +50,4 @@ if (isFirebaseConfigured) {
     }
 }
 
-export { firebaseApp, auth, database };
-export default firebaseConfig;
+export { auth, database };

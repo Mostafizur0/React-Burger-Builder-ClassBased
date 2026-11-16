@@ -15,5 +15,3 @@ export const INGREDIENT_PRICES = {
 };
 
 export const BASE_PRICE = 4;
-
-export default DEFAULT_INGREDIENTS;

@@ -80,10 +80,10 @@ describe('firebase service', () => {
         expect(service.database).toBeNull();
     });
 
-    it('should export the resolved configuration', () => {
-        const service = loadModule();
+    it('should initialize the app with the resolved configuration', () => {
+        loadModule();
 
-        expect(service.default).toEqual({
+        expect(initializeApp).toHaveBeenCalledWith({
             apiKey: 'api-key',
             authDomain: 'project.firebaseapp.com',
             projectId: 'project',

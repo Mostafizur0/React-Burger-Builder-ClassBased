@@ -9,14 +9,14 @@ import burgerBuilderReducer from './store/reducers/burgerBuilder';
 import orderReducer from './store/reducers/order';
 import authReducer from './store/reducers/auth';
 
-export const rootReducer = combineReducers({
+const rootReducer = combineReducers({
     burgerBuilder: burgerBuilderReducer,
     order: orderReducer,
     auth: authReducer
 });
 
 // Builds a store from the real reducers so tests exercise production logic.
-export const createTestStore = (preloadedState = {}) => {
+const createTestStore = (preloadedState = {}) => {
     return createStore(rootReducer, preloadedState, applyMiddleware(thunk));
 };
 
@@ -40,5 +40,3 @@ export const renderWithProviders = (ui, options = {}) => {
         ...render(ui, { wrapper: Wrapper, ...renderOptions })
     };
 };
-
-export default renderWithProviders;
